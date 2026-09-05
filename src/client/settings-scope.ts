@@ -11,7 +11,7 @@
  */
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import { createSnapshotStore } from './snapshot-store.ts'
 
 /** Settings namespace owned by the plugin (mirrors lib/settings.js). */
 export const LLM_PROXY_NAMESPACE = 'llm-proxy'
@@ -234,9 +234,10 @@ class BridgeScopeController implements ProxyModelScope {
     const value = response.value as { namespaces?: BridgeView[]; writable?: boolean }
     const view = (value.namespaces ?? []).find((candidate) => candidate.ns === LLM_PROXY_NAMESPACE)
     if (view === undefined) {
-      this.store.update((draft) => {
-        draft.status = 'unavailable'
-        draft.writable = value.writable !== false
+      this.store.set({
+        ...this.store.getSnapshot(),
+        status: 'unavailable',
+        writable: value.writable !== false,
       })
       return
     }
@@ -271,20 +272,23 @@ class BridgeScopeController implements ProxyModelScope {
   }
 
   private accept(view: BridgeView, writable: boolean) {
-    this.store.update((draft) => {
-      draft.revision = view.revision
-      draft.base = view.base
-      draft.user = view.user
-      draft.writable = writable
-      if (view.value === undefined || view.value === null) return
-      draft.status = 'ready'
-      draft.value = view.value
+    const previous = this.store.getSnapshot()
+    const hasValue = view.value !== undefined && view.value !== null
+    this.store.set({
+      ...previous,
+      revision: view.revision,
+      base: view.base,
+      user: view.user,
+      writable,
+      status: hasValue ? 'ready' : previous.status,
+      value: hasValue ? view.value : previous.value,
     })
   }
 
   private markUnavailable() {
-    this.store.update((draft) => {
-      draft.status = 'unavailable'
+    this.store.set({
+      ...this.store.getSnapshot(),
+      status: 'unavailable',
     })
   }
 }

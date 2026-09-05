@@ -7,6 +7,30 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
+
+test('client factory loads without a runtime/client module in the host table', () => {
+  // Model the host boundary independently of the build's external allowlist.
+  // Only Cordis is used during evaluation; React/UI exports are used on render.
+  const modules = new Map([
+    ['react', {}],
+    ['react/jsx-runtime', {}],
+    ['@deepseek-ai/cordis', { Service: class {} }],
+    ['@deepseek-ai/dsh-client-ui-primitives', {}],
+  ])
+  let entry
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  runInNewContext(source, {
+    window: { __ModuleLoader__: { load(value) { entry = value } } },
+  }, { filename: 'lib/client.js', timeout: 1000 })
+  assert.equal(entry?.id, '@superfish058/dsh-llm-proxy')
+  const plugin = entry.factory((specifier) => {
+    assert.ok(modules.has(specifier), `client-modules: require("${specifier}") missed the module table`)
+    return modules.get(specifier)
+  })
+  assert.equal(typeof plugin.apply, 'function')
+  assert.deepEqual(Array.from(plugin.inject), ['slots', 'locale', 'settingsScope', 'remote'])
+})
 
 test('client bundle is built and well-formed', () => {
   const path = new URL('../lib/client.js', import.meta.url)
