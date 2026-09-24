@@ -22,9 +22,9 @@ DSH 模型代理插件：给 LLM 请求按「目标域名」分流——选中�
 
 ## 宿主版本
 
-客户端半边按 **DSH `0.1.7-rc.1`** 的插件契约构建：设置读写走 `configForms` 入口表单，页面挂 `plugins.item`（list 槽位）。`@deepseek-ai/dsh-client-*` 构建依赖也锁定在同一版本线。
+客户端与宿主半边都按 **DSH `0.1.7-rc.1`** 的插件契约构建：设置读写走 `configForms` 入口表单，页面挂 `plugins.item`（list 槽位），`Config` 里所有可编辑字段都标记了 `.volatile()`。`@deepseek-ai/dsh-client-*` 构建依赖也锁定在同一版本线。
 
-> 更早的客户端契约（`settingsScope` 服务 + keyed `settings.plugin.item` 槽位）不再兼容：那些服务名在新版宿主里不存在，而静态 `inject` 是 Cordis 的硬门禁，服务永不出现时插件会一直停在 pending（`web boot: 1 entry did not activate`），而不是明确报错。
+> 更早的契约不再兼容。新版宿主有两处破坏性改动：静态 `inject` 里的服务名必须由宿主真实提供（否则插件一直 pending，报 `web boot: 1 entry did not activate`）；`ctx.settings` 不再有 `register()`，命名空间改由 Loader 按 profile entry id 自动登记，且只有标记 `.volatile()` 的字段才会出现在 `settings.describe()` 里——字段没标 volatile，entry 会被整个跳过，设置页就看不到任何卡片。
 
 ## 适合什么场景
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.2.1 (2026-09-24)
+
+- **修复设置页看不到「模型代理」卡片**：宿主 DSH `0.1.7-rc.1` 改了设置契约，而插件宿主半边还停在旧契约，导致 `llm-proxy` 命名空间从未出现在 `settings.describe()` 里——客户端表单恒为 `unavailable`，`configForms.whileServed` 永不触发，卡片不注册。实测：`describe()` 返回 17–20 个命名空间（含第三方插件的 `codex-subscription` / `ui-git-graph` / `web-ui-pet`），唯独没有 `llm-proxy`。
+  - **`Config` 字段标记 `.volatile()`**：`SettingsForms.describe()` 会把每个 entry 过一遍 `volatileForm(schema)`，只保留 volatile 子树。旧 Config 六个字段全是裸 schema，整个 form 被过滤成空，entry 直接被跳过。官方插件同理（`dsh-agent-loop` 的 `maxParallelToolCalls` 等）。
+  - **改用新的 seam**：`ctx.settings.register()` 在新版本已不存在（现为 `configure` / `update` / `mutate` / `describe`，按 profile entry id 寻址）。新增 `settingsScopeFor()`，把 `describe()` + `settings/document-updated` 投影成插件既有的 `{ get, watch }` 接口，下游 live-apply 逻辑不变。
+  - **`plainConfig()` 剥离 volatile 包装**：标记 volatile 后字段不再是裸值，而是 cosmokit wrapper；cordis 原样传给 `apply`，故入口处统一读穿（语义与宿主 `plainConfig` 一致）。
+- 测试：假 seam 全部改为新契约（移除 `register`），新增 volatile 标记断言与「外部命名空间不触发重装」用例；69 个用例全绿。
+
 ## v1.2.0 (2026-09-24)
 
 - **修复插件在 web 启动时挂起**：`pending (waiting for service: settingsScope)` / `web boot: 1 entry did not activate`。根因是客户端半边按 `@deepseek-ai/dsh-client-*@0.1.0-rc.7` 的契约构建，而宿主 DSH `0.1.7-rc.1` 提供的是另一条包线——它的 70 个客户端插件没有一个注册 `settingsScope`（整个安装目录 grep 命中 0）。静态 `inject` 是 Cordis 硬门禁，服务永不出现时 `apply()` 永远不会被调用。同宿主的 `dshmarket` / `dsh-codex-subscription` 同样需要该服务但都不放进静态 inject（用 `ctx.inject([...], cb)` 软注入），所以它们正常启动。

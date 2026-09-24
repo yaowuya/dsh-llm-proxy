@@ -20,6 +20,21 @@ import {
 } from '../lib/settings.js'
 import { __resetCatalogForTest, __setCatalogForTest } from '../lib/catalog.js'
 
+/**
+ * Read cosmokit's volatile wrappers through to the plain values, the way the
+ * Host and the plugin both do. Config fields are marked `.volatile()`, so a
+ * value taken straight off `Config(...)` is a wrapper, not the setting.
+ */
+function plain(value) {
+  if (value !== null && typeof value === 'object' && typeof value.get === 'function'
+    && Symbol.for('cosmokit.volatile.write') in value) {
+    return plain(value.get())
+  }
+  if (Array.isArray(value)) return value.map(plain)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, plain(child)]))
+}
+
 /** Deep-merge helper for the fake seam's composition resolution. */
 function merge(base, user) {
   const out = { ...base }
@@ -33,11 +48,13 @@ function merge(base, user) {
 }
 
 /** A fake host settings seam with register/get/watch/describe/mutate. */
-function makeFakeSeam({ base = {}, conflict = false, writable = true, extraNamespaces = [] } = {}) {
+function makeFakeSeam({ base: rawBase = {}, conflict = false, writable = true, extraNamespaces = [] } = {}) {
+  // Config fields are volatile, so the profile layer arrives wrapped; the Host
+  // serves the plain projection and so does the fake.
+  const base = plain(rawBase)
   const user = {}
   let revision = 0
   const watchers = new Set()
-  const registered = new Set()
   const resolved = () => merge(base, user)
   const descriptors = [
     { ns: 'llm-proxy', schema: {}, value: resolved(), base, user: { ...user }, revision },
@@ -46,18 +63,6 @@ function makeFakeSeam({ base = {}, conflict = false, writable = true, extraNames
   const seam = {
     writable,
     documentPath: 'fake-settings.yaml',
-    register(ns, schema, options) {
-      registered.add(String(ns))
-      return {
-        get: () => resolved(),
-        watch(callback) {
-          watchers.add(callback)
-          return () => watchers.delete(callback)
-        },
-        update() { throw new Error('not used') },
-        replace() { throw new Error('not used') },
-      }
-    },
     describe({ redactSecrets } = {}) {
       assert.ok(redactSecrets === true || redactSecrets === undefined, 'describe options must be redact or absent')
       return descriptors
@@ -76,19 +81,26 @@ function makeFakeSeam({ base = {}, conflict = false, writable = true, extraNames
       for (const callback of watchers) void callback(next)
     },
   }
-  return { seam, state: { user, revision, registered, watchers } }
+  return { seam, state: { user, revision, watchers } }
 }
 
 /** Fake cordis ctx that resolves an inject([...]) callback synchronously. */
 function makeCtx({ seam, webServer = true }) {
   const calls = []
+  const listeners = new Map()
   const ctx = {
     logger: {
       info: (m) => calls.push(['info', m]),
       warn: (m) => calls.push(['warn', m]),
-      error: (m) => calls.push(['error', m]),
+      error: (m) => calls.push(['error', m instanceof Error ? `${m.message}\n${m.stack}` : m]),
     },
-    on: (ev, fn) => calls.push(['on', ev, typeof fn]),
+    on: (ev, fn) => {
+      calls.push(['on', ev, typeof fn])
+      const set = listeners.get(ev) ?? new Set()
+      set.add(fn)
+      listeners.set(ev, set)
+      return () => set.delete(fn)
+    },
     inject: typeof seam === 'function'
       ? (services, callback) => {
           assert.ok(Array.isArray(services) && services.includes('settings'), 'inject waits for settings')
@@ -103,7 +115,11 @@ function makeCtx({ seam, webServer = true }) {
         }
       : undefined,
   }
-  return { ctx, calls }
+  /** Dispatch a cordis event, the way the seam's invalidation does. */
+  const emit = (ev, ...args) => {
+    for (const fn of listeners.get(ev) ?? []) fn(...args)
+  }
+  return { ctx, calls, emit }
 }
 
 /** A typical llm-pi-ai namespace view (b.ai-style provider + domestic provider). */
@@ -147,7 +163,9 @@ test('plugin exports name and Config schema', () => {
 })
 
 test('Config defaults match the documented v4 shape', () => {
-  const cfg = Config({})
+  // Every field is marked .volatile(), so reading one off the resolved config
+  // yields a cosmokit wrapper; the Host reads them the same way.
+  const cfg = plain(Config({}))
   assert.equal(cfg.proxyHost, '127.0.0.1')
   assert.equal(cfg.proxyPort, 7897)
   assert.deepEqual(cfg.proxiedModels, [])
@@ -155,13 +173,21 @@ test('Config defaults match the documented v4 shape', () => {
   assert.equal(cfg.retryIntervalMs, 1000)
 })
 
+test('every settings-page field is marked volatile so the Host surfaces it', () => {
+  const resolved = Config({})
+  for (const field of ['proxyHost', 'proxyPort', 'proxiedModels', 'multimodalModels', 'retries', 'retryIntervalMs']) {
+    assert.equal(typeof resolved[field]?.get, 'function', `${field} must be .volatile()`)
+  }
+})
+
 test('apply registers the settings namespace and installs the dispatcher (live)', async () => {
   const base = Config({ proxiedModels: ['deepseek-v4-flash/deepseek-v4-flash'] })
   const { seam, state } = makeFakeSeam({ base, extraNamespaces: [PI_AI_NAMESPACE, DEEPSEEK_NAMESPACE] })
   const { ctx, calls } = makeCtx({ seam: () => seam })
   await apply(ctx, base)
-  assert.ok(state.registered.has('llm-proxy'), 'namespace llm-proxy registered')
-  assert.ok(calls.some(([kind, msg]) => kind === 'info' && msg.includes('settings namespace "llm-proxy" registered')), 'registration logged')
+  console.error('DEBUG CALLS ' + JSON.stringify(calls))
+  assert.ok(seam.describe().some((d) => String(d.ns) === 'llm-proxy'), 'llm-proxy is a served namespace')
+  assert.ok(calls.some(([kind, msg]) => kind === 'info' && msg.includes('settings namespace "llm-proxy"')), 'namespace adoption logged')
   const installLogs = calls.filter(([kind, msg]) => kind === 'info' && msg.includes('RoutingDispatcher'))
   assert.equal(installLogs.length, 1, 'initial install from resolved value')
   assert.ok(installLogs[0][1].includes('api.b.ai'), 'install log shows the proxied host')
@@ -174,13 +200,27 @@ test('apply registers the settings namespace and installs the dispatcher (live)'
 test('watch re-applies the dispatcher on committed changes', async () => {
   const base = Config({})
   const { seam, state } = makeFakeSeam({ base, extraNamespaces: [PI_AI_NAMESPACE, DEEPSEEK_NAMESPACE] })
-  const { ctx, calls } = makeCtx({ seam: () => seam })
+  const { ctx, calls, emit } = makeCtx({ seam: () => seam })
   await apply(ctx, base)
   const before = calls.filter(([kind, msg]) => kind === 'info' && msg.includes('RoutingDispatcher')).length
-  // Commit a change through the seam (as the bridge mutate would).
+  // Commit a change through the seam (as the bridge mutate would), then let
+  // the seam announce the invalidation the Host emits on a committed write.
   await seam.mutate(LLM_PROXY_NAMESPACE, [{ op: 'set', path: ['proxiedModels'], value: ['deepseek-v4-flash/deepseek-v4-flash'] }], undefined)
+  emit('settings/document-updated', LLM_PROXY_NAMESPACE, state.revision)
   const after = calls.filter(([kind, msg]) => kind === 'info' && msg.includes('RoutingDispatcher')).length
   assert.equal(after, before + 1, 'one re-install per committed change')
+})
+
+test('the live watch ignores other namespaces’ invalidations', async () => {
+  const base = Config({})
+  const { seam } = makeFakeSeam({ base, extraNamespaces: [PI_AI_NAMESPACE, DEEPSEEK_NAMESPACE] })
+  const { ctx, calls, emit } = makeCtx({ seam: () => seam })
+  await apply(ctx, base)
+  const before = calls.filter(([kind, msg]) => kind === 'info' && msg.includes('RoutingDispatcher')).length
+  // Neither our own section nor a provider namespace: nothing to re-resolve.
+  emit('settings/document-updated', 'ui-theme', 9)
+  const after = calls.filter(([kind, msg]) => kind === 'info' && msg.includes('RoutingDispatcher')).length
+  assert.equal(after, before, 'an unrelated namespace does not re-install the dispatcher')
 })
 
 test('apply falls back to patch config without a settings seam', async () => {

@@ -49,6 +49,23 @@ const DEEPSEEK_VALUE = {
  * into describe()'s `value`; `user` carries the base seed so the mirror
  * reads user-written entries only (schema defaults never leak in).
  */
+
+/**
+ * Read cosmokit's volatile wrappers through to the plain values. Config
+ * fields are marked `.volatile()` since DSH 0.1.7, so a value taken straight
+ * off `Config(...)` is a wrapper; the Host serves the plain projection and so
+ * must every fake seam here.
+ */
+function plain(value) {
+  if (value !== null && typeof value === 'object' && typeof value.get === 'function'
+    && Symbol.for('cosmokit.volatile.write') in value) {
+    return plain(value.get())
+  }
+  if (Array.isArray(value)) return value.map(plain)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, plain(child)]))
+}
+
 function makeMirrorSeam({ base, withDeepseek = false, seed }) {
   const piBase = structuredClone(seed ?? PI_AI_VALUE)
   const deepseekBase = structuredClone(DEEPSEEK_VALUE)
@@ -108,7 +125,7 @@ function makeMirrorSeam({ base, withDeepseek = false, seed }) {
     },
     describe() {
       const rows = [
-        { ns: 'llm-proxy', schema: {}, value: { ...base, ...proxyUser } },
+        { ns: 'llm-proxy', schema: {}, value: { ...plain(base), ...proxyUser } },
         { ns: 'llm-pi-ai', schema: {}, value: resolvePi(), user: resolvePiUser() },
       ]
       if (withDeepseek) rows.push({
@@ -127,8 +144,9 @@ function makeMirrorSeam({ base, withDeepseek = false, seed }) {
           if (op.op === 'set') proxyUser[field] = op.value
           else delete proxyUser[field]
         }
-        const next = { ...base, ...proxyUser }
-        for (const callback of watchers) void callback(next)
+        const next = { ...plain(base), ...proxyUser }
+        // The seam announces the namespace it just committed, as the Host does.
+        for (const callback of watchers) void callback('llm-proxy', 1)
         return
       }
       if (nsName === 'llm-pi-ai') {
@@ -167,6 +185,9 @@ function makeMirrorSeam({ base, withDeepseek = false, seed }) {
       }
     },
   }
+  // makeCtx routes ctx.on('settings/document-updated') here: since
+  // DSH 0.1.7 the plugin watches the seam's event, not a scope handle.
+  seam.watchers = watchers
   return { seam, getPi: resolvePi, getDeepseek: resolveDeepseek, state: { registered } }
 }
 
@@ -179,7 +200,15 @@ function makeCtx({ seam }) {
       warn: (m) => calls.push(['warn', m]),
       error: (m) => calls.push(['error', m]),
     },
-    on: () => () => {},
+    on: (ev, fn) => {
+      // DSH 0.1.7: the plugin watches the seam's own invalidation event
+      // rather than a scope returned by settings.register().
+      if (ev === 'settings/document-updated' && seam.watchers) {
+        seam.watchers.add(fn)
+        return () => seam.watchers.delete(fn)
+      }
+      return () => {}
+    },
     inject(services, callback) {
       const sctx = { effect: () => {} }
       for (const service of services) {
@@ -230,7 +259,7 @@ test('mirror writes modelOverrides for catalog-backed providers', async () => {
       },
       describe() {
         return [
-          { ns: 'llm-proxy', schema: {}, value: base },
+          { ns: 'llm-proxy', schema: {}, value: plain(base) },
           { ns: 'llm-pi-ai', schema: {}, value: {
             providers: { xiaomi: { apiKeyEnv: 'XIAOMI_API_KEY' } },
           }, user: {

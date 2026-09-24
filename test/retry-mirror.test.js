@@ -35,6 +35,23 @@ const PI_AI_VALUE = {
  * Fake seam that accepts cross-namespace mutate on `llm-pi-ai` (as the real
  * dsh-settings seam does) and reflects provider-layer edits into describe().
  */
+
+/**
+ * Read cosmokit's volatile wrappers through to the plain values. Config
+ * fields are marked `.volatile()` since DSH 0.1.7, so a value taken straight
+ * off `Config(...)` is a wrapper; the Host serves the plain projection and so
+ * must every fake seam here.
+ */
+function plain(value) {
+  if (value !== null && typeof value === 'object' && typeof value.get === 'function'
+    && Symbol.for('cosmokit.volatile.write') in value) {
+    return plain(value.get())
+  }
+  if (Array.isArray(value)) return value.map(plain)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, plain(child)]))
+}
+
 function makeMirrorSeam({ base }) {
   const proxyUser = {}
   const piUser = {}
@@ -64,7 +81,7 @@ function makeMirrorSeam({ base }) {
     },
     describe() {
       return [
-        { ns: 'llm-proxy', schema: {}, value: { ...base, ...proxyUser } },
+        { ns: 'llm-proxy', schema: {}, value: { ...plain(base), ...proxyUser } },
         { ns: 'llm-pi-ai', schema: {}, value: resolvePi() },
       ]
     },
@@ -75,8 +92,9 @@ function makeMirrorSeam({ base }) {
           if (op.op === 'set') proxyUser[field] = op.value
           else delete proxyUser[field]
         }
-        const next = { ...base, ...proxyUser }
-        for (const callback of watchers) void callback(next)
+        const next = { ...plain(base), ...proxyUser }
+        // The seam announces the namespace it just committed, as the Host does.
+        for (const callback of watchers) void callback('llm-proxy', 1)
       } else {
         assert.equal(String(ns), 'llm-pi-ai')
         for (const op of ops) {
@@ -91,6 +109,9 @@ function makeMirrorSeam({ base }) {
       }
     },
   }
+  // makeCtx routes ctx.on('settings/document-updated') here: since
+  // DSH 0.1.7 the plugin watches the seam's event, not a scope handle.
+  seam.watchers = watchers
   return { seam, getPi: resolvePi, state: { registered } }
 }
 
@@ -103,7 +124,15 @@ function makeCtx({ seam }) {
       warn: (m) => calls.push(['warn', m]),
       error: (m) => calls.push(['error', m]),
     },
-    on: () => () => {},
+    on: (ev, fn) => {
+      // DSH 0.1.7: the plugin watches the seam's own invalidation event
+      // rather than a scope returned by settings.register().
+      if (ev === 'settings/document-updated' && seam.watchers) {
+        seam.watchers.add(fn)
+        return () => seam.watchers.delete(fn)
+      }
+      return () => {}
+    },
     inject(services, callback) {
       const sctx = { effect: () => {} }
       for (const service of services) {
@@ -222,7 +251,7 @@ function makeCatalogSeam({ base }) {
     },
     describe() {
       return [
-        { ns: 'llm-proxy', schema: {}, value: { ...base, ...proxyUser } },
+        { ns: 'llm-proxy', schema: {}, value: { ...plain(base), ...proxyUser } },
         { ns: 'llm-pi-ai', schema: {}, value: resolvePi() },
       ]
     },
@@ -233,8 +262,9 @@ function makeCatalogSeam({ base }) {
           if (op.op === 'set') proxyUser[field] = op.value
           else delete proxyUser[field]
         }
-        const next = { ...base, ...proxyUser }
-        for (const callback of watchers) void callback(next)
+        const next = { ...plain(base), ...proxyUser }
+        // The seam announces the namespace it just committed, as the Host does.
+        for (const callback of watchers) void callback('llm-proxy', 1)
       } else {
         assert.equal(String(ns), 'llm-pi-ai')
         for (const op of ops) {
@@ -249,6 +279,9 @@ function makeCatalogSeam({ base }) {
       }
     },
   }
+  // makeCtx routes ctx.on('settings/document-updated') here: since
+  // DSH 0.1.7 the plugin watches the seam's event, not a scope handle.
+  seam.watchers = watchers
   return { seam, getPi: resolvePi, state: { registered } }
 }
 
