@@ -6,7 +6,7 @@ DSH 模型代理插件：给 LLM 请求按「目标域名」分流——选中�
 
 ## 它是干嘛的
 
-- **按模型走代理**：在 DSH 设置页（插件 → 可配置插件 → 模型代理）勾选需要走代理的模型（如 `deepseek-v4-flash`），该模型的请求自动经 `proxyHost:proxyPort`（默认 `127.0.0.1:7897`，即 Clash）转发；未勾选的模型（DeepSeek、小米、通义等国内 API）保持直连。路由按模型的 **API 地址（baseURL host）** 生效：选中一个模型后，同一地址下的所有模型都会走代理（例如 B.AI 的 `deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` 共享 `api.b.ai`）。
+- **按模型走代理**：在 DSH 设置页（插件 → 模型代理）勾选需要走代理的模型（如 `deepseek-v4-flash`），该模型的请求自动经 `proxyHost:proxyPort`（默认 `127.0.0.1:7897`，即 Clash）转发；未勾选的模型（DeepSeek、小米、通义等国内 API）保持直连。路由按模型的 **API 地址（baseURL host）** 生效：选中一个模型后，同一地址下的所有模型都会走代理（例如 B.AI 的 `deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` 共享 `api.b.ai`）。
 - **失败自动重试**：对断连（ECONNRESET 等）、HTTP 429 限流、5xx 错误自动重试（默认 3 次、间隔 1s），减少免费额度被瞬时错误打断。
 - **模型列表与官方一致**：只配了 `apiKeyEnv`、没写 `models` 的 provider（如 `xiaomi`），其模型从 pi-ai 内置目录（`@earendil-works/pi-ai`）回退补齐；`llm-deepseek` 命名空间即使保持默认空文档（`llm-deepseek: {}`）也回退官方内置目录（`https://api.deepseek.com` + `DEEPSEEK_API_KEY`），`deepseek-official/*` 模型开箱可用。勾选列表与 DSH 官方模型选择器完全同步。
 - **retryPolicy 镜像**：卡片上的 `retries`/`retryIntervalMs` 会镜像进被勾选 provider 的官方 `retryPolicy`（驱动设置页可见的 `(retry/maximum)` 提示），取消勾选自动还原官方默认值——一套配置同时驱动传输层重试与官方重试 UI。
@@ -17,8 +17,14 @@ DSH 模型代理插件：给 LLM 请求按「目标域名」分流——选中�
 ## 用什么技术
 
 - **undici 全局 Dispatcher 注入**：`RoutingDispatcher`（按 hostname 路由）+ 官方 `RetryAgent`（重试）包一层自定义 dispatcher 挂到 Node 全局。LLM 请求（OpenAI SDK → undici fetch）自动经过它，位于 LLM 适配器之下、供应商之上。
-- **Cordis 插件**：宿主侧注册 `llm-proxy` 设置命名空间（`lib/settings.js`）；浏览器侧设置卡片（`src/client/`，挂 `settings.plugin.item` slot，走官方 transport、bridge 兜底）。
+- **Cordis 插件**：宿主侧注册 `llm-proxy` 设置命名空间（`lib/settings.js`）；浏览器侧设置页（`src/client/`，挂 `plugins.item` slot，读写走官方 `configForms` 入口表单）。
 - **客户端构建**：tsdown（Rolldown）打包 `lib/client.js`，经 `window.__ModuleLoader__` 注入前端。
+
+## 宿主版本
+
+客户端半边按 **DSH `0.1.7-rc.1`** 的插件契约构建：设置读写走 `configForms` 入口表单，页面挂 `plugins.item`（list 槽位）。`@deepseek-ai/dsh-client-*` 构建依赖也锁定在同一版本线。
+
+> 更早的客户端契约（`settingsScope` 服务 + keyed `settings.plugin.item` 槽位）不再兼容：那些服务名在新版宿主里不存在，而静态 `inject` 是 Cordis 的硬门禁，服务永不出现时插件会一直停在 pending（`web boot: 1 entry did not activate`），而不是明确报错。
 
 ## 适合什么场景
 
@@ -49,7 +55,7 @@ dsh plugin --profile web add C:/path/to/dsh-llm-proxy
 
 ## 验证
 
-**最快方式**：设置页（插件 → 可配置插件 → 模型代理）的「走代理的模型」列表里，每行有「测试连接」按钮，点击即向该模型发一次最小探测请求（走插件自己的全局 dispatcher，即真实代理路径）：
+**最快方式**：设置页（插件 → 模型代理）的「走代理的模型」列表里，每行有「测试连接」按钮，点击即向该模型发一次最小探测请求（走插件自己的全局 dispatcher，即真实代理路径）：
 
 - ✓ 连接成功：显示 `状态 · 耗时 · 经代理/直连 · 多模态已开启`（如 `✓ 连接成功 · 200 · 38ms · 经代理 · 多模态已开启`）
 - ✗ 连接失败：直接显示脱敏后的提供方错误原因（认证失败、限流、`max_tokens` 限制等），一眼定位问题

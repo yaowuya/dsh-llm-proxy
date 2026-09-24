@@ -1,16 +1,19 @@
 /**
- * The `settings.llm-proxy` locale dictionaries for the 模型代理 section.
+ * The `settings.llm-proxy` locale dictionaries for the 模型代理 page.
  * Keys track exactly the UI-surfaced fields (proxyHost/proxyPort,
- * proxiedModels, retries/retryIntervalMs).
+ * proxiedModels, multimodalModels, retries/retryIntervalMs) plus the frame
+ * copy the official SettingsForm renders on the plugin's own behalf.
  */
 
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
-  nav: '模型代理',
   title: '模型代理（dsh-llm-proxy）',
   description: '选中的模型请求走代理并自动重试。',
-  statusLoading: '加载中…',
-  statusUnavailable: '设置服务不可用，无法读取或写入代理配置。',
+  formUnavailable: '设置服务不可用，无法读取或写入代理配置。',
+  formReadOnly: '当前配置为只读，无法保存。',
+  formSaveFailed: '保存被拒绝，请检查取值后重试。',
+  formSave: '保存',
+  formSaving: '保存中…',
   fieldProxyHost: '代理地址（proxyHost）',
   fieldProxyHostHint: '代理服务器主机或 IP，不必是本机。',
   fieldProxyPort: '代理端口（proxyPort）',
@@ -23,15 +26,10 @@ export const zh = {
   fieldRetryIntervalMsHint: '每次重试之间的等待毫秒数（0–60000）。',
   selectModel: '选择模型…',
   remove: '移除',
-  save: '保存',
-  saving: '保存中…',
-  saved: '已保存，立即生效',
+  overridden: '已自定义',
   reset: '恢复默认',
-  saveError: '保存失败',
   invalidRange: '端口或数值超出允许范围。',
   invalidEmpty: '代理地址不能为空。',
-  expand: '展开',
-  collapse: '收起',
   fieldMultimodalModels: '多模态模型（multimodalModels）',
   fieldMultimodalModelsHint: '勾选后模型声明支持图片输入，DSH 不再拒绝发图；取消勾选自动还原。',
   multimodalBadge: '🖼 多模态',
@@ -47,11 +45,13 @@ export const zh = {
 
 /** English dictionary, checked complete against the zh key set. */
 export const en: Record<keyof typeof zh, string> = {
-  nav: 'Proxy Model',
   title: 'Proxy Model (dsh-llm-proxy)',
   description: 'Selected models route through the proxy with automatic retries.',
-  statusLoading: 'Loading…',
-  statusUnavailable: 'Settings service unavailable; the proxy configuration cannot be read or written.',
+  formUnavailable: 'Settings service unavailable; the proxy configuration cannot be read or written.',
+  formReadOnly: 'This configuration is read-only and cannot be saved.',
+  formSaveFailed: 'The Host refused the save; check the values and try again.',
+  formSave: 'Save',
+  formSaving: 'Saving…',
   fieldProxyHost: 'Proxy host (proxyHost)',
   fieldProxyHostHint: 'Proxy server hostname or IP; does not have to be this machine.',
   fieldProxyPort: 'Proxy port (proxyPort)',
@@ -64,15 +64,10 @@ export const en: Record<keyof typeof zh, string> = {
   fieldRetryIntervalMsHint: 'Milliseconds between retry attempts (0–60000).',
   selectModel: 'Select model…',
   remove: 'Remove',
-  save: 'Save',
-  saving: 'Saving…',
-  saved: 'Saved, applied live',
+  overridden: 'Overridden',
   reset: 'Reset to defaults',
-  saveError: 'Save failed',
   invalidRange: 'Port or numeric value out of range.',
   invalidEmpty: 'Proxy host must not be empty.',
-  expand: 'Expand',
-  collapse: 'Collapse',
   fieldMultimodalModels: 'Multimodal models (multimodalModels)',
   fieldMultimodalModelsHint: 'Checked models are advertised as accepting image input; unchecking restores the official defaults.',
   multimodalBadge: '🖼 Multimodal',

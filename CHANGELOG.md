@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.0 (2026-09-24)
+
+- **修复插件在 web 启动时挂起**：`pending (waiting for service: settingsScope)` / `web boot: 1 entry did not activate`。根因是客户端半边按 `@deepseek-ai/dsh-client-*@0.1.0-rc.7` 的契约构建，而宿主 DSH `0.1.7-rc.1` 提供的是另一条包线——它的 70 个客户端插件没有一个注册 `settingsScope`（整个安装目录 grep 命中 0）。静态 `inject` 是 Cordis 硬门禁，服务永不出现时 `apply()` 永远不会被调用。同宿主的 `dshmarket` / `dsh-codex-subscription` 同样需要该服务但都不放进静态 inject（用 `ctx.inject([...], cb)` 软注入），所以它们正常启动。
+- **对齐宿主设置契约**：客户端构建依赖 `@deepseek-ai/dsh-client-*` 由 `0.1.0-rc.7` 升至 `0.1.7-rc.1`；设置读写改走官方 `configForms.get('llm-proxy')` 入口表单（`SettingsFormModel` 负责暂存、revision 围栏写入、恢复默认、非法草稿拦截），删除 `LlmProxySettingsBinder` 及其「官方 scope + loopback bridge 二选一」兼容层。
+- **对齐槽位契约**：页面由 `settings.plugin.item`（keyed，需 `key`）改为 `plugins.item`（list，需 `id` + `order: 50`），并用 `configForms.whileServed` 包裹——宿主不再服务该命名空间时页面不留下任何痕迹。
+- **卡片重写**：宿主插件页自带标题、摘要与展开/收起，卡片只负责 `summary` 一行与 `page` 表单；代理地址/端口/重试策略改用官方 `SettingsValueField` + `SettingsForm` 框架，两个模型多选与逐行「测试连接」保留自有 UI，但暂存与保存沿用官方表单。
+- **保留桥接的只剩两条**：`/models` 与 `/test` 需要宿主的 provider 注册表与全局 dispatcher，浏览器做不了；`/describe`、`/mutate` 客户端不再调用（宿主侧路由暂留，无风险）。
+- 客户端 bundle 由 46.9 kB 降到 26.9 kB，外部依赖收敛为 `react` / `react/jsx-runtime` / `@deepseek-ai/dsh-client-ui-primitives`。
+- 新增测试 `test/client-page.test.js`（6 个用例：注册接线、`whileServed` 行为、各字段 format/parse 边界）与 `test/host-contract-check.mjs`（校验本插件 inject 的每个服务名确实由宿主提供——即本次故障的回归护栏）。
+
 ## v1.1.0 (2026-08-24)
 
 - **测试连接**：走代理的模型列表每行新增「测试连接」按钮。宿主侧新增 loopback 桥接端点 `POST /api/dsh-llm-proxy/settings/test`，对被勾选模型发一个最小 `chat/completions` 探测请求（走插件自己的全局 dispatcher，即真实代理路径），返回 HTTP 状态 / 耗时 / 是否经代理 / 多模态是否开启；网络超时、认证失败、限流、服务端错误都有明确提示（`lib/connection-test.js`）。
